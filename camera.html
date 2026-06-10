@@ -24,11 +24,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#111;color:#fff;f
 #gps-status{font-size:11px;color:#888;text-align:center;}
 #cam-count{font-size:10px;color:#555;margin-top:3px;}
 #toggle-btn{position:fixed;top:12px;right:12px;z-index:1000;background:rgba(0,0,0,0.75);color:#fff;border:1px solid #555;border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;}
+#follow-btn{position:fixed;bottom:80px;right:12px;z-index:1000;background:rgba(0,0,0,0.75);color:#fff;border:1px solid #555;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;}
 .leaflet-container{background:#f0e8d8;}
 </style>
 </head>
 <body>
-<div id="alert-box">⚠️ 과속! <span id="alert-dist"></span>m 전방 카메라 — 제한 <span id="alert-limit"></span>km/h</div>
+<div id="alert-box">⚠️ <span id="alert-msg"></span></div>
 <div id="speed-overlay">
   <div id="speed-big">--</div>
   <div id="speed-unit">km/h</div>
@@ -54,187 +55,98 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#111;color:#fff;f
   </div>
 </div>
 <button id="toggle-btn" onclick="toggleSound()">🔊 ON</button>
+<button id="follow-btn" onclick="toggleFollow()">📍 따라가기 ON</button>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="cameras.js"></script>
 <script>
-const CAMERAS=[
-  {lat:37.0068,lng:127.2699,limit:60,name:"안성 공도읍 만정리"},
-  {lat:37.0101,lng:127.2801,limit:60,name:"안성 공도읍 용두리"},
-  {lat:37.0023,lng:127.2604,limit:60,name:"안성 공도읍 내리"},
-  {lat:37.0180,lng:127.2750,limit:80,name:"안성 공도읍 양기리"},
-  {lat:37.0250,lng:127.2850,limit:80,name:"안성 공도 17번국도"},
-  {lat:36.9950,lng:127.2600,limit:60,name:"안성 미양면"},
-  {lat:36.9900,lng:127.2500,limit:60,name:"안성 미양면 계륵리"},
-  {lat:37.0080,lng:127.2400,limit:60,name:"안성 원곡면"},
-  {lat:37.0160,lng:127.2600,limit:60,name:"안성 38번국도"},
-  {lat:37.0050,lng:127.2700,limit:60,name:"안성 공도 38번국도"},
-  {lat:37.0300,lng:127.2950,limit:80,name:"안성 1번국도 북"},
-  {lat:36.9800,lng:127.2650,limit:60,name:"안성 1번국도 남"},
-  {lat:37.0070,lng:127.3100,limit:80,name:"안성 서동대로"},
-  {lat:37.0500,lng:127.2700,limit:100,name:"평택제천고속도로"},
-  {lat:36.9650,lng:127.2700,limit:80,name:"안성 죽산면"},
-  {lat:37.0120,lng:127.2550,limit:60,name:"안성시내 중앙로"},
-  {lat:37.0090,lng:127.2680,limit:50,name:"안성시내 봉남로"},
-  {lat:37.0060,lng:127.2720,limit:50,name:"안성시내 시장로"},
-  {lat:37.0200,lng:127.2800,limit:60,name:"안성 보개면"},
-  {lat:36.9920,lng:127.2750,limit:60,name:"안성 대덕면"},
-  {lat:37.0350,lng:127.2600,limit:80,name:"안성 양성면"},
-  {lat:36.9750,lng:127.2500,limit:60,name:"안성 일죽면"},
-  {lat:37.0400,lng:127.3200,limit:80,name:"안성 고삼면"},
-  {lat:37.0600,lng:127.2900,limit:80,name:"안성 금광면"},
-  {lat:37.0080,lng:127.2900,limit:60,name:"안성 공도 동쪽"},
-  {lat:37.2636,lng:127.0286,limit:60,name:"수원 팔달구 인계동"},
-  {lat:37.2750,lng:127.0440,limit:60,name:"수원 영통구 매탄동"},
-  {lat:37.2910,lng:127.0090,limit:80,name:"수원 장안구 정자동"},
-  {lat:37.2510,lng:127.0710,limit:60,name:"수원 영통구 영통동"},
-  {lat:37.2680,lng:127.0580,limit:60,name:"수원 영통구 원천동"},
-  {lat:37.2560,lng:126.9880,limit:80,name:"수원 팔달구 우만동"},
-  {lat:37.3010,lng:127.0350,limit:60,name:"수원 장안구 율전동"},
-  {lat:37.2430,lng:127.0530,limit:60,name:"수원 권선구 권선동"},
-  {lat:37.4200,lng:127.1260,limit:60,name:"성남 분당구 서현동"},
-  {lat:37.3850,lng:127.1220,limit:60,name:"성남 분당구 야탑동"},
-  {lat:37.4380,lng:127.1380,limit:60,name:"성남 분당구 정자동"},
-  {lat:37.4490,lng:127.1300,limit:80,name:"성남 분당구 미금동"},
-  {lat:37.4200,lng:127.0580,limit:60,name:"성남 중원구 성남동"},
-  {lat:37.4330,lng:127.1450,limit:60,name:"성남 분당 판교"},
-  {lat:37.2341,lng:127.2029,limit:60,name:"용인 기흥구 기흥동"},
-  {lat:37.2780,lng:127.1160,limit:80,name:"용인 수지구 죽전동"},
-  {lat:37.3210,lng:127.0980,limit:60,name:"용인 수지구 풍덕천"},
-  {lat:37.1980,lng:127.1980,limit:80,name:"용인 처인구 역북동"},
-  {lat:37.2560,lng:127.1580,limit:60,name:"용인 기흥구 영덕동"},
-  {lat:36.9921,lng:127.1129,limit:60,name:"평택 평택동"},
-  {lat:37.0180,lng:127.0710,limit:80,name:"평택 서정동"},
-  {lat:36.9720,lng:127.0930,limit:60,name:"평택 비전동"},
-  {lat:37.0650,lng:127.0780,limit:80,name:"평택 안중읍"},
-  {lat:36.9580,lng:127.1580,limit:60,name:"평택 오성면"},
-  {lat:37.1995,lng:126.8315,limit:80,name:"화성 남양읍"},
-  {lat:37.1840,lng:126.9210,limit:60,name:"화성 봉담읍"},
-  {lat:37.2290,lng:126.8810,limit:60,name:"화성 향남읍"},
-  {lat:37.1510,lng:126.9780,limit:80,name:"화성 동탄"},
-  {lat:37.2010,lng:126.9580,limit:60,name:"화성 병점"},
-  {lat:37.1497,lng:127.0770,limit:60,name:"오산 오산동"},
-  {lat:37.1680,lng:127.0650,limit:60,name:"오산 갈곶동"},
-  {lat:37.1320,lng:127.0850,limit:80,name:"오산 세마동"},
-  {lat:37.3800,lng:126.8030,limit:60,name:"시흥 정왕동"},
-  {lat:37.4410,lng:126.8030,limit:60,name:"시흥 신천동"},
-  {lat:37.3600,lng:126.7380,limit:80,name:"시흥 월곶동"},
-  {lat:37.4784,lng:126.8645,limit:60,name:"광명 철산동"},
-  {lat:37.4580,lng:126.8660,limit:60,name:"광명 하안동"},
-  {lat:37.3943,lng:126.9568,limit:60,name:"안양 만안구 안양동"},
-  {lat:37.3780,lng:126.9330,limit:60,name:"안양 동안구 비산동"},
-  {lat:37.4020,lng:126.9780,limit:80,name:"안양 만안구 석수동"},
-  {lat:37.3620,lng:126.9350,limit:60,name:"군포 산본동"},
-  {lat:37.3480,lng:126.9240,limit:60,name:"군포 금정동"},
-  {lat:37.3440,lng:126.9680,limit:60,name:"의왕 부곡동"},
-  {lat:37.3580,lng:126.9780,limit:80,name:"의왕 청계동"},
-  {lat:37.2100,lng:126.9780,limit:100,name:"수원외곽순환"},
-  {lat:37.1800,lng:127.0350,limit:100,name:"동탄~오산 고속화"},
-  {lat:37.4850,lng:126.9010,limit:80,name:"서울 금천구 시흥대로"},
-  {lat:37.5120,lng:126.8880,limit:80,name:"서울 구로구 경인로"},
-  {lat:37.5380,lng:126.9020,limit:60,name:"서울 영등포구 여의대방로"},
-  {lat:37.5650,lng:126.8980,limit:60,name:"서울 영등포구 국회대로"},
-  {lat:37.4560,lng:126.7052,limit:80,name:"인천 서구 가좌동"},
-  {lat:37.4758,lng:126.6160,limit:60,name:"인천 연수구 송도"},
-  {lat:37.5050,lng:126.7210,limit:80,name:"인천 부평구 부평동"},
-  {lat:37.4850,lng:126.7480,limit:60,name:"인천 남동구 구월동"},
-  {lat:37.6584,lng:126.8320,limit:60,name:"고양 일산서구 주엽동"},
-  {lat:37.6760,lng:126.7710,limit:60,name:"고양 일산동구 장항동"},
-  {lat:37.6380,lng:126.9220,limit:80,name:"고양 덕양구 행신동"},
-  {lat:37.6620,lng:126.8680,limit:60,name:"고양 일산 중앙로"},
-  {lat:37.7580,lng:126.7800,limit:80,name:"파주 금촌동"},
-  {lat:37.8350,lng:126.7480,limit:60,name:"파주 문산읍"},
-  {lat:37.6150,lng:126.7150,limit:60,name:"김포 사우동"},
-  {lat:37.6350,lng:126.7580,limit:80,name:"김포 고촌읍"},
-  {lat:37.7380,lng:127.0340,limit:60,name:"의정부 의정부동"},
-  {lat:37.7580,lng:127.0580,limit:80,name:"의정부 신곡동"},
-  {lat:37.6360,lng:127.2160,limit:60,name:"남양주 화도읍"},
-  {lat:37.6560,lng:127.1780,limit:80,name:"남양주 별내동"},
-  {lat:37.5980,lng:127.1580,limit:60,name:"남양주 다산동"},
-  {lat:37.5960,lng:127.1290,limit:60,name:"구리 인창동"},
-  {lat:37.6120,lng:127.1480,limit:80,name:"구리 교문동"},
-  {lat:37.5390,lng:127.2050,limit:60,name:"하남 신장동"},
-  {lat:37.5620,lng:127.2250,limit:80,name:"하남 덕풍동"},
-  {lat:37.4298,lng:127.2557,limit:60,name:"광주 경안동"},
-  {lat:37.4080,lng:127.2780,limit:80,name:"광주 초월읍"},
-  {lat:37.2720,lng:127.4350,limit:60,name:"이천 중리동"},
-  {lat:37.2480,lng:127.4520,limit:80,name:"이천 부발읍"},
-];
 const ALERT_DIST=1000,WARN_DIST=1500;
 let map,myMarker,soundOn=true,audioCtx=null,lastAlertTime=0,currentSpeed=0;
-let prevLat=null,prevLng=null,heading=0;
+let followMode=true,markerLayer=null;
 
 function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
 function playBeep(f,d,v){if(!soundOn||!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);o.frequency.value=f;g.gain.value=v||0.4;o.start();o.stop(audioCtx.currentTime+d);}
 function playSpeedAlert(){if(!audioCtx)return;playBeep(880,0.15,0.7);setTimeout(()=>playBeep(880,0.15,0.7),200);setTimeout(()=>playBeep(1100,0.3,0.8),400);}
 function playCameraAlert(){if(!audioCtx)return;playBeep(550,0.2,0.4);setTimeout(()=>playBeep(550,0.2,0.4),300);}
 function toggleSound(){initAudio();soundOn=!soundOn;document.getElementById('toggle-btn').textContent=soundOn?'🔊 ON':'🔇 OFF';}
+function toggleFollow(){followMode=!followMode;document.getElementById('follow-btn').textContent=followMode?'📍 따라가기 ON':'📍 따라가기 OFF';}
 function deg2rad(d){return d*Math.PI/180;}
 function getDistance(a,b,c,d){const R=6371000,dL=deg2rad(c-a),dG=deg2rad(d-b),x=Math.sin(dL/2)**2+Math.cos(deg2rad(a))*Math.cos(deg2rad(c))*Math.sin(dG/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
-function getBearing(lat1,lng1,lat2,lng2){
-  const dLng=deg2rad(lng2-lng1);
-  const y=Math.sin(dLng)*Math.cos(deg2rad(lat2));
-  const x=Math.cos(deg2rad(lat1))*Math.sin(deg2rad(lat2))-Math.sin(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.cos(dLng);
-  return(Math.atan2(y,x)*180/Math.PI+360)%360;
+
+function renderMarkers(){
+  if(!markerLayer)return;
+  markerLayer.clearLayers();
+  if(map.getZoom()<12)return;
+  const b=map.getBounds();
+  const s=b.getSouth(),n=b.getNorth(),w=b.getWest(),e=b.getEast();
+  let cnt=0;
+  for(let i=0;i<CAMERAS.length;i++){
+    const c=CAMERAS[i];
+    if(c[0]>s&&c[0]<n&&c[1]>w&&c[1]<e){
+      const col=c[2]>0?'#ff4400':'#ff8800';
+      L.circleMarker([c[0],c[1]],{radius:7,color:'#fff',weight:2,fillColor:col,fillOpacity:1})
+        .bindPopup(c[2]>0?'과속단속 '+c[2]+'km/h':'신호단속')
+        .addTo(markerLayer);
+      cnt++;
+      if(cnt>500)break;
+    }
+  }
 }
 
-const camIcon=L.divIcon({html:'<div style="background:#ff4400;width:13px;height:13px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 5px #ff4400;"></div>',className:'',iconAnchor:[6,6]});
-const myIcon=L.divIcon({html:'<div style="background:#44aaff;width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 10px #44aaff;"></div>',className:'',iconAnchor:[9,9]});
-
 window.addEventListener('load',()=>{
-  map=L.map('map',{zoomControl:true,attributionControl:false,rotate:true}).setView([37.2,127.1],11);
+  map=L.map('map',{zoomControl:true,attributionControl:false,preferCanvas:true}).setView([37.2,127.1],11);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
-  CAMERAS.forEach(cam=>{
-    L.marker([cam.lat,cam.lng],{icon:camIcon}).addTo(map).bindPopup('<b>'+cam.name+'</b><br>제한속도: '+cam.limit+'km/h');
-    L.circle([cam.lat,cam.lng],{radius:ALERT_DIST,color:'#ff4400',fillColor:'#ff4400',fillOpacity:0.05,weight:1}).addTo(map);
-  });
-  document.getElementById('cam-count').textContent='카메라 '+CAMERAS.length+'개';
+  markerLayer=L.layerGroup().addTo(map);
+  map.on('moveend zoomend',renderMarkers);
+  renderMarkers();
+  document.getElementById('cam-count').textContent='카메라 '+CAMERAS.length.toLocaleString()+'개';
+  map.on('dragstart',()=>{followMode=false;document.getElementById('follow-btn').textContent='📍 따라가기 OFF';});
 
   if(navigator.geolocation){
     navigator.geolocation.watchPosition(pos=>{
       const lat=pos.coords.latitude,lng=pos.coords.longitude;
       currentSpeed=pos.coords.speed?Math.round(pos.coords.speed*3.6):0;
-
-      // 방향 계산
-      if(prevLat!==null&&prevLng!==null){
-        const dist=getDistance(prevLat,prevLng,lat,lng);
-        if(dist>3) heading=getBearing(prevLat,prevLng,lat,lng);
-      }
-      prevLat=lat; prevLng=lng;
-
       document.getElementById('gps-status').textContent='● GPS 연결됨';
       document.getElementById('gps-status').style.color='#00cc66';
       document.getElementById('speed-big').textContent=currentSpeed;
 
       if(!myMarker){
-        myMarker=L.marker([lat,lng],{icon:myIcon,zIndexOffset:1000}).addTo(map);
+        myMarker=L.circleMarker([lat,lng],{radius:10,color:'#fff',weight:3,fillColor:'#44aaff',fillOpacity:1}).addTo(map);
+        map.setView([lat,lng],15);
       } else {
         myMarker.setLatLng([lat,lng]);
       }
 
-      // 속도 10 이상이면 확대 + 방향 맞춤
-      if(currentSpeed>=10){
-        map.setView([lat,lng],16,{animate:true});
-        // 지도 회전 (leaflet-rotate 미지원시 베어링만 저장)
-        if(map.setBearing) map.setBearing(heading);
-      } else {
-        map.panTo([lat,lng],{animate:true});
+      if(followMode){
+        if(currentSpeed>=10){
+          map.setView([lat,lng],16,{animate:true});
+        } else {
+          map.panTo([lat,lng],{animate:true});
+        }
       }
 
       let nd=Infinity,nc=null;
-      CAMERAS.forEach(cam=>{const d=getDistance(lat,lng,cam.lat,cam.lng);if(d<nd){nd=d;nc=cam;}});
+      for(let i=0;i<CAMERAS.length;i++){
+        const c=CAMERAS[i];
+        const d=getDistance(lat,lng,c[0],c[1]);
+        if(d<nd){nd=d;nc=c;}
+      }
       const dr=Math.round(nd);
-      document.getElementById('nearest-dist').textContent=dr<9999?dr:'--';
-      document.getElementById('nearest-limit').textContent=nc?nc.limit:'--';
-      document.getElementById('limit-info').textContent=nc?'제한 '+nc.limit+'km/h':'제한속도 --';
+      const limit=nc?nc[2]:0;
+
+      document.getElementById('nearest-dist').textContent=dr<99999?dr:'--';
+      document.getElementById('nearest-limit').textContent=limit>0?limit:'신호';
+      document.getElementById('limit-info').textContent=limit>0?'제한 '+limit+'km/h':'신호단속 구간';
       document.getElementById('nearest-dist').className=nd<ALERT_DIST?'stat-value warning':nd<WARN_DIST?'stat-value':'stat-value ok';
-      document.getElementById('speed-big').style.color=(nc&&nd<ALERT_DIST&&currentSpeed>nc.limit)?'#ff4400':'#ffffff';
+
+      const overLimit=limit>0&&currentSpeed>limit;
+      document.getElementById('speed-big').style.color=(nd<ALERT_DIST&&overLimit)?'#ff4400':'#ffffff';
 
       const ab=document.getElementById('alert-box'),now=Date.now();
-      if(nc&&nd<ALERT_DIST&&currentSpeed>nc.limit){
+      if(nd<ALERT_DIST&&overLimit){
         ab.style.display='block';
-        document.getElementById('alert-dist').textContent=dr;
-        document.getElementById('alert-limit').textContent=nc.limit;
+        document.getElementById('alert-msg').textContent='과속! '+dr+'m 전방 카메라 — 제한 '+limit+'km/h';
         if(now-lastAlertTime>3000){playSpeedAlert();lastAlertTime=now;}
-      } else if(nd<ALERT_DIST){
+      } else if(nd<ALERT_DIST&&currentSpeed>=10){
         ab.style.display='none';
         if(now-lastAlertTime>5000){playCameraAlert();lastAlertTime=now;}
       } else {
