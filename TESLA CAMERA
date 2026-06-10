@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>과속카메라 알림</title>
+<script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=c8e21e0849f5e017681673ecff7c4d3e"></script>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#111;color:#fff;font-family:-apple-system,sans-serif;overflow:hidden;}
+#wrap{display:flex;flex-direction:column;width:100%;height:100%;}
+#map{flex:1;width:100%;min-height:0;}
+#alert-box{display:none;position:fixed;top:0;left:0;right:0;background:#cc2200;color:#fff;text-align:center;padding:14px;font-size:22px;font-weight:700;z-index:9999;animation:blink 0.6s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.65}}
+#status-bar{background:#1a1a1a;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #333;height:64px;flex-shrink:0;}
+.stat{text-align:center;}
+.stat-label{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;}
+.stat-value{font-size:22px;font-weight:700;color:#fff;margin-top:2px;}
+.stat-value.warning{color:#ff4400;}
+.stat-value.ok{color:#00cc66;}
+#gps-status{font-size:12px;color:#888;text-align:center;}
+#cam-count{font-size:11px;color:#555;margin-top:4px;}
+#toggle-btn{position:fixed;top:12px;right:12px;z-index:1000;background:rgba(0,0,0,0.75);color:#fff;border:1px solid #555;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="alert-box">⚠️ 과속카메라 <span id="alert-dist"></span>m 전방!</div>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="status-bar">
+    <div class="stat">
+      <div class="stat-label">내 속도</div>
+      <div class="stat-value" id="my-speed">--</div>
+      <div style="font-size:11px;color:#888;">km/h</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">가까운 카메라</div>
+      <div class="stat-value" id="nearest-dist">--</div>
+      <div style="font-size:11px;color:#888;">m</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">제한속도</div>
+      <div class="stat-value" id="nearest-limit">--</div>
+      <div style="font-size:11px;color:#888;">km/h</div>
+    </div>
+    <div class="stat">
+      <div id="gps-status">GPS 연결 중...</div>
+      <div id="cam-count"></div>
+    </div>
+  </div>
+</div>
+<button id="toggle-btn" onclick="toggleSound()">🔊 ON</button>
+<script>
+const CAMERAS=[
+  {lat:37.0068,lng:127.2699,limit:60,name:"안성 공도읍 만정리"},
+  {lat:37.0101,lng:127.2801,limit:60,name:"안성 공도읍 용두리"},
+  {lat:37.0023,lng:127.2604,limit:60,name:"안성 공도읍 내리"},
+  {lat:37.0180,lng:127.2750,limit:80,name:"안성 공도읍 양기리"},
+  {lat:37.0250,lng:127.2850,limit:80,name:"안성 공도 17번국도"},
+  {lat:36.9950,lng:127.2600,limit:60,name:"안성 미양면"},
+  {lat:36.9900,lng:127.2500,limit:60,name:"안성 미양면 계륵리"},
+  {lat:37.0080,lng:127.2400,limit:60,name:"안성 원곡면"},
+  {lat:37.0160,lng:127.2600,limit:60,name:"안성 38번국도"},
+  {lat:37.0050,lng:127.2700,limit:60,name:"안성 공도 38번국도2"},
+  {lat:37.0300,lng:127.2950,limit:80,name:"안성 1번국도 북"},
+  {lat:36.9800,lng:127.2650,limit:60,name:"안성 1번국도 남"},
+  {lat:37.0070,lng:127.3100,limit:80,name:"안성 서동대로"},
+  {lat:37.0500,lng:127.2700,limit:100,name:"평택제천고속도로"},
+  {lat:36.9650,lng:127.2700,limit:80,name:"안성 죽산면"},
+  {lat:37.0120,lng:127.2550,limit:60,name:"안성시내 중앙로"},
+  {lat:37.0090,lng:127.2680,limit:50,name:"안성시내 봉남로"},
+  {lat:37.0060,lng:127.2720,limit:50,name:"안성시내 시장로"},
+  {lat:37.0200,lng:127.2800,limit:60,name:"안성 보개면"},
+  {lat:36.9920,lng:127.2750,limit:60,name:"안성 대덕면"},
+  {lat:37.0350,lng:127.2600,limit:80,name:"안성 양성면"},
+  {lat:36.9750,lng:127.2500,limit:60,name:"안성 일죽면"},
+  {lat:37.0400,lng:127.3200,limit:80,name:"안성 고삼면"},
+  {lat:37.0600,lng:127.2900,limit:80,name:"안성 금광면"},
+  {lat:37.0080,lng:127.2900,limit:60,name:"안성 공도 동쪽"},
+];
+const ALERT_DIST=300,WARN_DIST=500;
+let map,myMarker,soundOn=true,audioCtx=null,lastAlertTime=0;
+function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
+function playBeep(f,d,v){if(!soundOn||!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);o.frequency.value=f;g.gain.value=v||0.4;o.start();o.stop(audioCtx.currentTime+d);}
+function playAlert(dist){if(!audioCtx)return;if(dist<150){playBeep(880,0.2,0.6);setTimeout(()=>playBeep(880,0.2,0.6),250);setTimeout(()=>playBeep(880,0.2,0.6),500);}else if(dist<300){playBeep(660,0.25,0.5);setTimeout(()=>playBeep(660,0.25,0.5),350);}else{playBeep(440,0.3,0.4);}}
+function toggleSound(){initAudio();soundOn=!soundOn;document.getElementById('toggle-btn').textContent=soundOn?'🔊 ON':'🔇 OFF';}
+function deg2rad(d){return d*Math.PI/180;}
+function getDistance(a,b,c,d){const R=6371000,dL=deg2rad(c-a),dG=deg2rad(d-b),x=Math.sin(dL/2)**2+Math.cos(deg2rad(a))*Math.cos(deg2rad(c))*Math.sin(dG/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+function initMap(lat,lng){
+  const center=new kakao.maps.LatLng(lat,lng);
+  map=new kakao.maps.Map(document.getElementById('map'),{center,level:5});
+  CAMERAS.forEach(cam=>{
+    const pos=new kakao.maps.LatLng(cam.lat,cam.lng);
+    new kakao.maps.Circle({map,center:pos,radius:ALERT_DIST,strokeWeight:1,strokeColor:'#ff4400',strokeOpacity:0.4,fillColor:'#ff4400',fillOpacity:0.07});
+    new kakao.maps.CustomOverlay({map,position:pos,content:'<div style="background:#ff4400;width:14px;height:14px;border-radius:50%;border:2px solid #fff;margin-top:-7px;margin-left:-7px;"></div>',zIndex:3});
+    new kakao.maps.CustomOverlay({map,position:pos,content:'<div style="background:rgba(0,0,0,0.75);color:#ffaa88;font-size:11px;padding:2px 5px;border-radius:4px;white-space:nowrap;margin-top:8px;margin-left:-16px;">'+cam.limit+'km/h</div>',zIndex:2});
+  });
+  document.getElementById('cam-count').textContent='카메라 '+CAMERAS.length+'개';
+}
+function updatePosition(pos){
+  const lat=pos.coords.latitude,lng=pos.coords.longitude;
+  const speed=pos.coords.speed?Math.round(pos.coords.speed*3.6):null;
+  document.getElementById('gps-status').textContent='● GPS 연결됨';
+  document.getElementById('gps-status').style.color='#00cc66';
+  if(speed!==null)document.getElementById('my-speed').textContent=speed;
+  const ll=new kakao.maps.LatLng(lat,lng);
+  if(!map){initMap(lat,lng);}else{map.panTo(ll);}
+  if(!myMarker){myMarker=new kakao.maps.CustomOverlay({map,position:ll,content:'<div style="background:#44aaff;width:18px;height:18px;border-radius:50%;border:3px solid #fff;margin-top:-9px;margin-left:-9px;"></div>',zIndex:10});}
+  else{myMarker.setPosition(ll);}
+  let nd=Infinity,nc=null;
+  CAMERAS.forEach(cam=>{const d=getDistance(lat,lng,cam.lat,cam.lng);if(d<nd){nd=d;nc=cam;}});
+  const dr=Math.round(nd);
+  document.getElementById('nearest-dist').textContent=dr<9999?dr:'--';
+  document.getElementById('nearest-limit').textContent=nc?nc.limit:'--';
+  const el=document.getElementById('nearest-dist');
+  el.className=nd<ALERT_DIST?'stat-value warning':nd<WARN_DIST?'stat-value':'stat-value ok';
+  const ab=document.getElementById('alert-box'),now=Date.now();
+  if(nd<ALERT_DIST){ab.style.display='block';document.getElementById('alert-dist').textContent=dr;if(now-lastAlertTime>4000){playAlert(nd);lastAlertTime=now;}}
+  else{ab.style.display='none';}
+}
+function gpsError(){document.getElementById('gps-status').textContent='GPS 오류';document.getElementById('gps-status').style.color='#ff4400';if(!map)initMap(37.007,127.270);}
+document.addEventListener('click',()=>initAudio(),{once:true});
+window.addEventListener('load',()=>{
+  if(navigator.geolocation){navigator.geolocation.watchPosition(updatePosition,gpsError,{enableHighAccuracy:true,maximumAge:2000,timeout:10000});}
+  else{document.getElementById('gps-status').textContent='GPS 미지원';initMap(37.007,127.270);}
+});
+</script>
+</body>
+</html>
