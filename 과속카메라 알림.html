@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<!-- saved from url=(0104)file:///C:/Users/admin/Downloads/%EA%B3%BC%EC%86%8D%EC%B9%B4%EB%A9%94%EB%9D%BC%20%EC%95%8C%EB%A6%BC.html -->
+<html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>과속카메라 알림</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #fff; font-family: -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  #map-container { flex: 1; position: relative; overflow: hidden; background: #1a1a2e; }
+  #map-canvas { width: 100%; height: 100%; }
+  #alert-box {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    background: #cc2200;
+    color: #fff;
+    text-align: center;
+    padding: 14px;
+    font-size: 22px;
+    font-weight: 700;
+    z-index: 9999;
+    animation: blink 0.6s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.65} }
+  #status-bar {
+    background: #1a1a1a;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid #333;
+    min-height: 64px;
+    flex-shrink: 0;
+  }
+  .stat { text-align: center; }
+  .stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  .stat-value { font-size: 22px; font-weight: 700; color: #fff; margin-top: 2px; }
+  .stat-value.warning { color: #ff4400; }
+  .stat-value.ok { color: #00cc66; }
+  #gps-status { font-size: 12px; color: #888; text-align: center; }
+  #toggle-btn {
+    position: fixed;
+    top: 12px; right: 12px;
+    z-index: 1000;
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #zoom-btns {
+    position: fixed;
+    bottom: 80px; right: 12px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .zoom-btn {
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 8px;
+    width: 40px; height: 40px;
+    font-size: 22px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #cam-count { font-size: 11px; color: #555; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div id="alert-box" style="display: none;">⚠️ 과속카메라 <span id="alert-dist">24</span>m 전방!</div>
+
+<div id="map-container">
+  <canvas id="map-canvas" width="1920" height="824"></canvas>
+</div>
+
+<button id="toggle-btn" onclick="toggleSound()">🔊 ON</button>
+
+<div id="zoom-btns">
+  <button class="zoom-btn" onclick="zoom(1.3)">+</button>
+  <button class="zoom-btn" onclick="zoom(0.77)">−</button>
+</div>
+
+<div id="status-bar">
+  <div class="stat">
+    <div class="stat-label">내 속도</div>
+    <div class="stat-value" id="my-speed">--</div>
+    <div style="font-size:11px;color:#888;">km/h</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">가까운 카메라</div>
+    <div class="stat-value ok" id="nearest-dist">3958</div>
+    <div style="font-size:11px;color:#888;">m</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">제한속도</div>
+    <div class="stat-value" id="nearest-limit">60</div>
+    <div style="font-size:11px;color:#888;">km/h</div>
+  </div>
+  <div class="stat">
+    <div id="gps-status" style="color: rgb(0, 204, 102);">● GPS 연결됨</div>
+    <div id="cam-count">카메라 25개</div>
+  </div>
+</div>
+
+<script>
+const CAMERAS = [
+  {lat:37.0068,lng:127.2699,limit:60,name:"안성 공도읍 만정리"},
+  {lat:37.0101,lng:127.2801,limit:60,name:"안성 공도읍 용두리"},
+  {lat:37.0023,lng:127.2604,limit:60,name:"안성 공도읍 내리"},
+  {lat:37.0180,lng:127.2750,limit:80,name:"안성 공도읍 양기리"},
+  {lat:37.0250,lng:127.2850,limit:80,name:"안성 공도 17번국도"},
+  {lat:36.9950,lng:127.2600,limit:60,name:"안성 미양면"},
+  {lat:36.9900,lng:127.2500,limit:60,name:"안성 미양면 계륵리"},
+  {lat:37.0080,lng:127.2400,limit:60,name:"안성 원곡면"},
+  {lat:37.0160,lng:127.2600,limit:60,name:"안성 38번국도"},
+  {lat:37.0050,lng:127.2700,limit:60,name:"안성 공도 38번국도2"},
+  {lat:37.0300,lng:127.2950,limit:80,name:"안성 1번국도 북"},
+  {lat:36.9800,lng:127.2650,limit:60,name:"안성 1번국도 남"},
+  {lat:37.0070,lng:127.3100,limit:80,name:"안성 서동대로"},
+  {lat:37.0500,lng:127.2700,limit:100,name:"평택제천고속도로"},
+  {lat:36.9650,lng:127.2700,limit:80,name:"안성 죽산면"},
+  {lat:37.0120,lng:127.2550,limit:60,name:"안성시내 중앙로"},
+  {lat:37.0090,lng:127.2680,limit:50,name:"안성시내 봉남로"},
+  {lat:37.0060,lng:127.2720,limit:50,name:"안성시내 시장로"},
+  {lat:37.0200,lng:127.2800,limit:60,name:"안성 보개면"},
+  {lat:36.9920,lng:127.2750,limit:60,name:"안성 대덕면"},
+  {lat:37.0350,lng:127.2600,limit:80,name:"안성 양성면"},
+  {lat:36.9750,lng:127.2500,limit:60,name:"안성 일죽면"},
+  {lat:37.0400,lng:127.3200,limit:80,name:"안성 고삼면"},
+  {lat:37.0600,lng:127.2900,limit:80,name:"안성 금광면"},
+  {lat:37.0080,lng:127.2900,limit:60,name:"안성 공도 동쪽"},
+];
+
+const ALERT_DIST = 300;
+const WARN_DIST = 500;
+
+let myLat = 37.007, myLng = 127.270;
+let hasGps = false;
+let scale = 120000;
+let soundOn = true;
+let audioCtx = null;
+let lastAlertTime = 0;
+let canvas, ctx, W, H;
+let isDragging = false, dragStart = {x:0,y:0}, mapOffset = {x:0,y:0}, dragOffset = {x:0,y:0};
+
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playBeep(freq, duration, vol) {
+  if (!soundOn || !audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.frequency.value = freq; gain.gain.value = vol || 0.4;
+  osc.start(); osc.stop(audioCtx.currentTime + duration);
+}
+function playAlert(dist) {
+  if (!audioCtx) return;
+  if (dist < 150) {
+    playBeep(880,0.2,0.6); setTimeout(()=>playBeep(880,0.2,0.6),250); setTimeout(()=>playBeep(880,0.2,0.6),500);
+  } else if (dist < 300) {
+    playBeep(660,0.25,0.5); setTimeout(()=>playBeep(660,0.25,0.5),350);
+  } else {
+    playBeep(440,0.3,0.4);
+  }
+}
+function toggleSound() {
+  initAudio();
+  soundOn = !soundOn;
+  document.getElementById('toggle-btn').textContent = soundOn ? '🔊 ON' : '🔇 OFF';
+}
+function zoom(factor) { scale *= factor; draw(); }
+
+function deg2rad(d) { return d * Math.PI / 180; }
+function getDistance(lat1,lng1,lat2,lng2) {
+  const R=6371000, dLat=deg2rad(lat2-lat1), dLng=deg2rad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function latLngToXY(lat, lng, centerLat, centerLng) {
+  const dx = (lng - centerLng) * Math.cos(deg2rad(centerLat)) * scale;
+  const dy = (centerLat - lat) * scale;
+  return { x: W/2 + dx + mapOffset.x + dragOffset.x, y: H/2 + dy + mapOffset.y + dragOffset.y };
+}
+
+function draw() {
+  if (!canvas) return;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0,0,W,H);
+
+  const centerLat = myLat, centerLng = myLng;
+
+  // 격자선
+  ctx.strokeStyle = '#2a2a4a';
+  ctx.lineWidth = 0.5;
+  for (let i=-5;i<=5;i++) {
+    const p1 = latLngToXY(centerLat+i*0.01, centerLng-0.1, centerLat, centerLng);
+    const p2 = latLngToXY(centerLat+i*0.01, centerLng+0.1, centerLat, centerLng);
+    ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+    const q1 = latLngToXY(centerLat-0.1, centerLng+i*0.01, centerLat, centerLng);
+    const q2 = latLngToXY(centerLat+0.1, centerLng+i*0.01, centerLat, centerLng);
+    ctx.beginPath(); ctx.moveTo(q1.x,q1.y); ctx.lineTo(q2.x,q2.y); ctx.stroke();
+  }
+
+  // 카메라들
+  CAMERAS.forEach(cam => {
+    const p = latLngToXY(cam.lat, cam.lng, centerLat, centerLng);
+    const dist = getDistance(myLat, myLng, cam.lat, cam.lng);
+
+    // 경고 반경 원
+    const radiusPx = ALERT_DIST / 111000 * scale;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radiusPx, 0, Math.PI*2);
+    ctx.fillStyle = dist < ALERT_DIST ? 'rgba(255,68,0,0.12)' : 'rgba(255,68,0,0.05)';
+    ctx.fill();
+    ctx.strokeStyle = dist < ALERT_DIST ? 'rgba(255,68,0,0.6)' : 'rgba(255,68,0,0.2)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 카메라 점
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7, 0, Math.PI*2);
+    ctx.fillStyle = dist < ALERT_DIST ? '#ff4400' : '#ff6633';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // 제한속도 라벨
+    if (scale > 80000) {
+      ctx.fillStyle = '#ffaa88';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(cam.limit+'km/h', p.x, p.y-12);
+    }
+  });
+
+  // 내 위치
+  if (hasGps) {
+    const me = latLngToXY(myLat, myLng, centerLat, centerLng);
+    ctx.beginPath();
+    ctx.arc(me.x, me.y, 18, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(68,170,255,0.15)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(me.x, me.y, 9, 0, Math.PI*2);
+    ctx.fillStyle = '#44aaff';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
+
+  // 스케일 바
+  const scaleM = 500;
+  const scalePx = scaleM / 111000 * scale;
+  ctx.strokeStyle = '#aaa'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(16, H-20); ctx.lineTo(16+scalePx, H-20); ctx.stroke();
+  ctx.fillStyle = '#aaa'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('500m', 20+scalePx, H-17);
+}
+
+function resize() {
+  W = canvas.width = canvas.offsetWidth;
+  H = canvas.height = canvas.offsetHeight;
+  draw();
+}
+
+function updateNearest() {
+  let nearestDist = Infinity, nearestCam = null;
+  CAMERAS.forEach(cam => {
+    const d = getDistance(myLat, myLng, cam.lat, cam.lng);
+    if (d < nearestDist) { nearestDist = d; nearestCam = cam; }
+  });
+  const dr = Math.round(nearestDist);
+  document.getElementById('nearest-dist').textContent = dr < 9999 ? dr : '--';
+  document.getElementById('nearest-limit').textContent = nearestCam ? nearestCam.limit : '--';
+  const distEl = document.getElementById('nearest-dist');
+  distEl.className = nearestDist < ALERT_DIST ? 'stat-value warning' : nearestDist < WARN_DIST ? 'stat-value' : 'stat-value ok';
+
+  const alertBox = document.getElementById('alert-box');
+  const now = Date.now();
+  if (nearestDist < ALERT_DIST) {
+    alertBox.style.display = 'block';
+    document.getElementById('alert-dist').textContent = dr;
+    if (now - lastAlertTime > 4000) { playAlert(nearestDist); lastAlertTime = now; }
+  } else {
+    alertBox.style.display = 'none';
+  }
+}
+
+function onGps(pos) {
+  myLat = pos.coords.latitude;
+  myLng = pos.coords.longitude;
+  hasGps = true;
+  mapOffset = {x:0, y:0};
+  const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : null;
+  document.getElementById('gps-status').textContent = '● GPS 연결됨';
+  document.getElementById('gps-status').style.color = '#00cc66';
+  if (speed !== null) document.getElementById('my-speed').textContent = speed;
+  updateNearest();
+  draw();
+}
+
+function onGpsErr() {
+  document.getElementById('gps-status').textContent = '⚠ GPS 오류';
+  document.getElementById('gps-status').style.color = '#ff4400';
+}
+
+window.addEventListener('load', () => {
+  canvas = document.getElementById('map-canvas');
+  ctx = canvas.getContext('2d');
+  document.getElementById('cam-count').textContent = '카메라 '+CAMERAS.length+'개';
+
+  canvas.addEventListener('mousedown', e => { isDragging=true; dragStart={x:e.clientX,y:e.clientY}; });
+  canvas.addEventListener('mousemove', e => { if(isDragging){ dragOffset={x:e.clientX-dragStart.x,y:e.clientY-dragStart.y}; draw(); }});
+  canvas.addEventListener('mouseup', e => { mapOffset.x+=dragOffset.x; mapOffset.y+=dragOffset.y; dragOffset={x:0,y:0}; isDragging=false; });
+  canvas.addEventListener('touchstart', e => { isDragging=true; dragStart={x:e.touches[0].clientX,y:e.touches[0].clientY}; }, {passive:true});
+  canvas.addEventListener('touchmove', e => { if(isDragging){ dragOffset={x:e.touches[0].clientX-dragStart.x,y:e.touches[0].clientY-dragStart.y}; draw(); }}, {passive:true});
+  canvas.addEventListener('touchend', () => { mapOffset.x+=dragOffset.x; mapOffset.y+=dragOffset.y; dragOffset={x:0,y:0}; isDragging=false; });
+  canvas.addEventListener('wheel', e => { zoom(e.deltaY<0?1.2:0.83); e.preventDefault(); }, {passive:false});
+  canvas.addEventListener('click', () => initAudio(), {once:true});
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(onGps, onGpsErr, {enableHighAccuracy:true, maximumAge:2000, timeout:10000});
+  } else {
+    document.getElementById('gps-status').textContent = 'GPS 미지원';
+  }
+
+  setInterval(() => { updateNearest(); draw(); }, 3000);
+});
+</script>
+
+
+</body></html>
