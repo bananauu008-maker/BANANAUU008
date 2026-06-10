@@ -33,13 +33,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#111;color:#fff;f
 <div id="speed-overlay">
   <div id="speed-big">--</div>
   <div id="speed-unit">km/h</div>
-  <div id="limit-info">제한속도 --</div>
+  <div id="limit-info"></div>
 </div>
 <div id="wrap">
   <div id="map"></div>
   <div id="status-bar">
     <div class="stat">
-      <div class="stat-label">가까운 카메라</div>
+      <div class="stat-label">전방 카메라</div>
       <div class="stat-value" id="nearest-dist">--</div>
       <div style="font-size:10px;color:#888;">m</div>
     </div>
@@ -59,9 +59,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#111;color:#fff;f
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="cameras.js"></script>
 <script>
-const ALERT_DIST=1000,WARN_DIST=1500;
+const ALERT_DIST=1000;
+const HEADING_TOLERANCE=60;
 let map,myMarker,soundOn=true,audioCtx=null,lastAlertTime=0,currentSpeed=0;
 let followMode=true,markerLayer=null;
+let prevLat=null,prevLng=null,heading=null;
 
 function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
 function playBeep(f,d,v){if(!soundOn||!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);o.frequency.value=f;g.gain.value=v||0.4;o.start();o.stop(audioCtx.currentTime+d);}
@@ -71,6 +73,13 @@ function toggleSound(){initAudio();soundOn=!soundOn;document.getElementById('tog
 function toggleFollow(){followMode=!followMode;document.getElementById('follow-btn').textContent=followMode?'📍 따라가기 ON':'📍 따라가기 OFF';}
 function deg2rad(d){return d*Math.PI/180;}
 function getDistance(a,b,c,d){const R=6371000,dL=deg2rad(c-a),dG=deg2rad(d-b),x=Math.sin(dL/2)**2+Math.cos(deg2rad(a))*Math.cos(deg2rad(c))*Math.sin(dG/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+function getBearing(lat1,lng1,lat2,lng2){
+  const dLng=deg2rad(lng2-lng1);
+  const y=Math.sin(dLng)*Math.cos(deg2rad(lat2));
+  const x=Math.cos(deg2rad(lat1))*Math.sin(deg2rad(lat2))-Math.sin(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.cos(dLng);
+  return(Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+function angleDiff(a,b){let d=Math.abs(a-b)%360;return d>180?360-d:d;}
 
 function renderMarkers(){
   if(!markerLayer)return;
@@ -105,6 +114,13 @@ window.addEventListener('load',()=>{
     navigator.geolocation.watchPosition(pos=>{
       const lat=pos.coords.latitude,lng=pos.coords.longitude;
       currentSpeed=pos.coords.speed?Math.round(pos.coords.speed*3.6):0;
+
+      if(prevLat!==null){
+        const moved=getDistance(prevLat,prevLng,lat,lng);
+        if(moved>5)heading=getBearing(prevLat,prevLng,lat,lng);
+      }
+      prevLat=lat;prevLng=lng;
+
       document.getElementById('gps-status').textContent='● GPS 연결됨';
       document.getElementById('gps-status').style.color='#00cc66';
       document.getElementById('speed-big').textContent=currentSpeed;
@@ -117,40 +133,54 @@ window.addEventListener('load',()=>{
       }
 
       if(followMode){
-        if(currentSpeed>=10){
-          map.setView([lat,lng],16,{animate:true});
-        } else {
-          map.panTo([lat,lng],{animate:true});
-        }
+        if(currentSpeed>=10){map.setView([lat,lng],16,{animate:true});}
+        else{map.panTo([lat,lng],{animate:true});}
       }
 
+      // 진행방향 전방 카메라 중 가장 가까운 것 (1km 이내)
       let nd=Infinity,nc=null;
       for(let i=0;i<CAMERAS.length;i++){
         const c=CAMERAS[i];
         const d=getDistance(lat,lng,c[0],c[1]);
+        if(d>ALERT_DIST)continue;
+        if(heading!==null&&currentSpeed>=10){
+          const brg=getBearing(lat,lng,c[0],c[1]);
+          if(angleDiff(heading,brg)>HEADING_TOLERANCE)continue;
+        }
         if(d<nd){nd=d;nc=c;}
       }
-      const dr=Math.round(nd);
-      const limit=nc?nc[2]:0;
 
-      document.getElementById('nearest-dist').textContent=dr<99999?dr:'--';
-      document.getElementById('nearest-limit').textContent=limit>0?limit:'신호';
-      document.getElementById('limit-info').textContent=limit>0?'제한 '+limit+'km/h':'신호단속 구간';
-      document.getElementById('nearest-dist').className=nd<ALERT_DIST?'stat-value warning':nd<WARN_DIST?'stat-value':'stat-value ok';
+      const distEl=document.getElementById('nearest-dist');
+      const limitEl=document.getElementById('nearest-limit');
+      const infoEl=document.getElementById('limit-info');
 
-      const overLimit=limit>0&&currentSpeed>limit;
-      document.getElementById('speed-big').style.color=(nd<ALERT_DIST&&overLimit)?'#ff4400':'#ffffff';
+      if(nc){
+        const dr=Math.round(nd);
+        const limit=nc[2];
+        distEl.textContent=dr;
+        distEl.className='stat-value warning';
+        limitEl.textContent=limit>0?limit:'신호';
+        infoEl.textContent=limit>0?'제한 '+limit+'km/h':'신호단속 구간';
 
-      const ab=document.getElementById('alert-box'),now=Date.now();
-      if(nd<ALERT_DIST&&overLimit){
-        ab.style.display='block';
-        document.getElementById('alert-msg').textContent='과속! '+dr+'m 전방 카메라 — 제한 '+limit+'km/h';
-        if(now-lastAlertTime>3000){playSpeedAlert();lastAlertTime=now;}
-      } else if(nd<ALERT_DIST&&currentSpeed>=10){
-        ab.style.display='none';
-        if(now-lastAlertTime>5000){playCameraAlert();lastAlertTime=now;}
+        const overLimit=limit>0&&currentSpeed>limit;
+        document.getElementById('speed-big').style.color=overLimit?'#ff4400':'#ffffff';
+
+        const ab=document.getElementById('alert-box'),now=Date.now();
+        if(overLimit){
+          ab.style.display='block';
+          document.getElementById('alert-msg').textContent='과속! '+dr+'m 전방 카메라 — 제한 '+limit+'km/h';
+          if(now-lastAlertTime>3000){playSpeedAlert();lastAlertTime=now;}
+        } else {
+          ab.style.display='none';
+          if(currentSpeed>=10&&now-lastAlertTime>5000){playCameraAlert();lastAlertTime=now;}
+        }
       } else {
-        ab.style.display='none';
+        distEl.textContent='--';
+        distEl.className='stat-value ok';
+        limitEl.textContent='--';
+        infoEl.textContent='';
+        document.getElementById('speed-big').style.color='#ffffff';
+        document.getElementById('alert-box').style.display='none';
       }
     },()=>{
       document.getElementById('gps-status').textContent='GPS 오류';
